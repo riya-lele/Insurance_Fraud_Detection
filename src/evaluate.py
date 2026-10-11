@@ -82,8 +82,8 @@ def run_cv(
 ) -> pd.DataFrame:
     """Outer repeated stratified CV with inner 75/25 fit/validation split.
 
-    Models train on the fit portion only. Validation is reserved for
-    calibration/thresholds (not used for L0–G2 ranking metrics here).
+    Models train on the fit portion only. Validation is used for G3
+    calibration/thresholds; unused for L0–G2 ranking metrics.
     """
     y = pd.Series(np.asarray(y).astype(int), index=X.index)
     rskf = RepeatedStratifiedKFold(
@@ -104,11 +104,9 @@ def run_cv(
             stratify=y_train,
             random_state=seed + fold_id,
         )
-        # validation unused for L0–G2 score metrics; reserved for later tiers
-        _ = (X_val, y_val)
 
         for arm in arms:
-            scores, fit_pos = fit_predict_scores(
+            scores, fit_pos, extras = fit_predict_scores(
                 arm,
                 X_fit,
                 y_fit,
@@ -116,6 +114,8 @@ def run_cv(
                 num_cols,
                 cat_cols,
                 seed=seed + fold_id,
+                X_val=X_val if arm == "G3" else None,
+                y_val=y_val if arm == "G3" else None,
             )
             # Map fit positions back to original row labels / outer indices
             fit_original_labels = X_fit.index.to_numpy()[fit_pos]
@@ -140,6 +140,8 @@ def run_cv(
                 "fraud_rate_test": float(y_test.mean()),
                 **metrics,
             }
+            if "threshold" in extras:
+                row["threshold"] = extras["threshold"]
             rows.append(row)
 
     return pd.DataFrame(rows)

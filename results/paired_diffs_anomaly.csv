@@ -1,0 +1,8 @@
+metric,arm,baseline,mean_diff,ci_low,ci_high,n_folds,note
+pr_auc,G3,G0,-0.024950466753132238,-0.027853576429739235,-0.020841908352209115,3,folds are correlated; CI is approximate
+pr_auc,IF_all,G0,-0.13729499466003547,-0.1441407582487232,-0.1264642590454414,3,folds are correlated; CI is approximate
+pr_auc,IF_normal,G0,-0.13645072175897116,-0.14093768020582614,-0.13007372370393047,3,folds are correlated; CI is approximate
+pr_auc,rankavg_IF_all,G0,-0.044738177670482,-0.05314997363846094,-0.036063237877049376,3,folds are correlated; CI is approximate
+pr_auc,rankavg_IF_normal,G0,-0.046158717888746904,-0.04658187440040998,-0.04538481538686373,3,folds are correlated; CI is approximate
+pr_auc,stack_IF_all,G0,-0.02894156173321802,-0.0331139583679928,-0.02240430098952892,3,folds are correlated; CI is approximate
+pr_auc,stack_IF_normal,G0,-0.02855543000650122,-0.03732040152594335,-0.020860381669423,3,folds are correlated; CI is approximate

@@ -1,4 +1,4 @@
-"""Imbalance arms L0, G0, G1, G2 with fixed hyperparameters."""
+"""Supervised arms L0–G3 with fixed hyperparameters."""
 
 from __future__ import annotations
 
@@ -7,11 +7,14 @@ import pandas as pd
 from imblearn.over_sampling import SMOTENC
 from lightgbm import LGBMClassifier
 from sklearn.compose import ColumnTransformer
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler
 
 ARMS = ("L0", "G0", "G1", "G2")
+ALL_ARMS = ("L0", "G0", "G1", "G2", "G3")
 
 LGBM_PARAMS = dict(
     n_estimators=300,
@@ -31,7 +34,7 @@ def _lgbm(seed: int, scale_pos_weight: float | None = None) -> LGBMClassifier:
     return LGBMClassifier(**params)
 
 
-def _fit_ordinal(X_fit: pd.DataFrame, cat_cols: list[str], seed: int) -> OrdinalEncoder:
+def fit_ordinal(X_fit: pd.DataFrame, cat_cols: list[str]) -> OrdinalEncoder:
     enc = OrdinalEncoder(
         handle_unknown="use_encoded_value",
         unknown_value=-1,
@@ -42,7 +45,7 @@ def _fit_ordinal(X_fit: pd.DataFrame, cat_cols: list[str], seed: int) -> Ordinal
     return enc
 
 
-def _transform_ordinal(
+def transform_ordinal(
     enc: OrdinalEncoder,
     X: pd.DataFrame,
     num_cols: list[str],
@@ -56,8 +59,39 @@ def _transform_ordinal(
     return np.hstack(parts) if parts else np.empty((len(X), 0))
 
 
-def _cat_indices(num_cols: list[str], cat_cols: list[str]) -> list[int]:
+def cat_indices(num_cols: list[str], cat_cols: list[str]) -> list[int]:
     return list(range(len(num_cols), len(num_cols) + len(cat_cols)))
+
+
+def f1_threshold(y_true: np.ndarray, scores: np.ndarray) -> float:
+    """Threshold on scores that maximises F1 (unique score cutpoints)."""
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(scores, dtype=float)
+    candidates = np.unique(scores)
+    if len(candidates) == 0:
+        return 0.5
+    best_t, best_f1 = 0.5, -1.0
+    for t in candidates:
+        pred = (scores >= t).astype(int)
+        f1 = f1_score(y_true, pred, zero_division=0)
+        if f1 > best_f1:
+            best_f1, best_t = f1, float(t)
+    return best_t
+
+
+def _fit_g0_raw(
+    X_fit: pd.DataFrame,
+    y_fit: np.ndarray,
+    num_cols: list[str],
+    cat_cols: list[str],
+    seed: int,
+):
+    enc = fit_ordinal(X_fit, cat_cols)
+    X_fit_enc = transform_ordinal(enc, X_fit, num_cols, cat_cols)
+    cat_idx = cat_indices(num_cols, cat_cols)
+    model = _lgbm(seed)
+    model.fit(X_fit_enc, y_fit, categorical_feature=cat_idx)
+    return enc, model, cat_idx
 
 
 def fit_predict_scores(
@@ -68,17 +102,19 @@ def fit_predict_scores(
     num_cols: list[str],
     cat_cols: list[str],
     seed: int = 0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Train arm on fit split; return (eval_scores, fit_row_indices_used).
+    X_val: pd.DataFrame | None = None,
+    y_val: pd.Series | np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Train arm on fit split; return (eval_scores, fit_positions, extras).
 
-    fit_row_indices_used are positions into X_fit (0..n_fit-1) for real rows
-    that entered the model fit set before any synthetic oversampling.
+    G3 requires X_val/y_val: isotonic calibration and F1 threshold on val only.
     """
-    if arm not in ARMS:
-        raise ValueError(f"Unknown arm {arm!r}; expected one of {ARMS}")
+    if arm not in ALL_ARMS:
+        raise ValueError(f"Unknown arm {arm!r}; expected one of {ALL_ARMS}")
 
     y_fit = np.asarray(y_fit).astype(int)
     fit_positions = np.arange(len(X_fit))
+    extras: dict = {}
 
     if arm == "L0":
         pre = ColumnTransformer(
@@ -101,40 +137,50 @@ def fit_predict_scores(
         pipe = Pipeline([("pre", pre), ("clf", clf)])
         pipe.fit(X_fit, y_fit)
         scores = pipe.predict_proba(X_eval)[:, 1]
-        return scores, fit_positions
+        return scores, fit_positions, extras
 
-    enc = _fit_ordinal(X_fit, cat_cols, seed)
-    X_fit_enc = _transform_ordinal(enc, X_fit, num_cols, cat_cols)
-    X_eval_enc = _transform_ordinal(enc, X_eval, num_cols, cat_cols)
-    cat_idx = _cat_indices(num_cols, cat_cols)
+    if arm in ("G0", "G1", "G2"):
+        enc = fit_ordinal(X_fit, cat_cols)
+        X_fit_enc = transform_ordinal(enc, X_fit, num_cols, cat_cols)
+        X_eval_enc = transform_ordinal(enc, X_eval, num_cols, cat_cols)
+        cat_idx = cat_indices(num_cols, cat_cols)
 
-    if arm == "G0":
-        model = _lgbm(seed)
-        model.fit(X_fit_enc, y_fit, categorical_feature=cat_idx)
+        if arm == "G0":
+            model = _lgbm(seed)
+            model.fit(X_fit_enc, y_fit, categorical_feature=cat_idx)
+        elif arm == "G1":
+            n_pos = max(int(y_fit.sum()), 1)
+            n_neg = max(int((y_fit == 0).sum()), 1)
+            model = _lgbm(seed, scale_pos_weight=n_neg / n_pos)
+            model.fit(X_fit_enc, y_fit, categorical_feature=cat_idx)
+        else:
+            if len(cat_idx) == 0:
+                raise ValueError("G2/SMOTENC requires at least one categorical feature")
+            min_class = int(np.bincount(y_fit).min())
+            k_neighbors = max(1, min(5, min_class - 1))
+            smote = SMOTENC(
+                categorical_features=cat_idx,
+                random_state=seed,
+                k_neighbors=k_neighbors,
+            )
+            X_res, y_res = smote.fit_resample(X_fit_enc, y_fit)
+            model = _lgbm(seed)
+            model.fit(X_res, y_res, categorical_feature=cat_idx)
+
         scores = model.predict_proba(X_eval_enc)[:, 1]
-        return scores, fit_positions
+        return scores, fit_positions, extras
 
-    if arm == "G1":
-        n_pos = max(int(y_fit.sum()), 1)
-        n_neg = max(int((y_fit == 0).sum()), 1)
-        spw = n_neg / n_pos
-        model = _lgbm(seed, scale_pos_weight=spw)
-        model.fit(X_fit_enc, y_fit, categorical_feature=cat_idx)
-        scores = model.predict_proba(X_eval_enc)[:, 1]
-        return scores, fit_positions
-
-    # G2: SMOTENC on fit part only
-    if len(cat_idx) == 0:
-        raise ValueError("G2/SMOTENC requires at least one categorical feature")
-    min_class = int(np.bincount(y_fit).min())
-    k_neighbors = max(1, min(5, min_class - 1))
-    smote = SMOTENC(
-        categorical_features=cat_idx,
-        random_state=seed,
-        k_neighbors=k_neighbors,
-    )
-    X_res, y_res = smote.fit_resample(X_fit_enc, y_fit)
-    model = _lgbm(seed)
-    model.fit(X_res, y_res, categorical_feature=cat_idx)
-    scores = model.predict_proba(X_eval_enc)[:, 1]
-    return scores, fit_positions
+    # G3: G0 + isotonic on val + F1 threshold on calibrated val
+    if X_val is None or y_val is None:
+        raise ValueError("G3 requires X_val and y_val for calibration/thresholding")
+    y_val_arr = np.asarray(y_val).astype(int)
+    enc, model, cat_idx = _fit_g0_raw(X_fit, y_fit, num_cols, cat_cols, seed)
+    raw_val = model.predict_proba(transform_ordinal(enc, X_val, num_cols, cat_cols))[:, 1]
+    raw_eval = model.predict_proba(transform_ordinal(enc, X_eval, num_cols, cat_cols))[:, 1]
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    calibrator.fit(raw_val, y_val_arr)
+    cal_val = calibrator.predict(raw_val)
+    cal_eval = calibrator.predict(raw_eval)
+    extras["threshold"] = f1_threshold(y_val_arr, cal_val)
+    extras["calibrator"] = calibrator
+    return cal_eval, fit_positions, extras

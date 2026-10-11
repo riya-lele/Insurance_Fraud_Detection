@@ -98,7 +98,7 @@ def test_shuffled_labels_pr_auc_near_base_rate():
     X_fit, X_te, y_fit, y_te = train_test_split(
         X_s, y_shuf, test_size=0.3, stratify=y_shuf, random_state=0
     )
-    scores, _ = fit_predict_scores(
+    scores, _, _ = fit_predict_scores(
         "G0", X_fit, y_fit, X_te, num_cols, cat_cols, seed=0
     )
     pr = average_precision_score(y_te, scores)
