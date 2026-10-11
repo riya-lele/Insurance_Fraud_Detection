@@ -1,0 +1,7 @@
+comparison,spearman_mean,top10_overlap_mean
+G0 across seeds,0.963381535038932,8.9
+G1 across seeds,0.9534777814449672,8.9
+G2 across seeds,0.923159065628476,8.4
+G0 vs G1 (same seed),0.9692529033670161,9.6
+G0 vs G2 (same seed),0.8442714126807565,7.4
+G1 vs G2 (same seed),0.8149856097797057,7.6
