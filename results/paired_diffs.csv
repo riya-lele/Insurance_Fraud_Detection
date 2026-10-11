@@ -1,0 +1,4 @@
+metric,arm,baseline,mean_diff,ci_low,ci_high,n_folds,note
+pr_auc,G1,G0,-0.018218680289926643,-0.02621234294754715,-0.003089919561326593,3,folds are correlated; CI is approximate
+pr_auc,G2,G0,0.00046623893519991594,-0.00988067849772492,0.005800390103189251,3,folds are correlated; CI is approximate
+pr_auc,L0,G0,-0.052849096324306004,-0.06491189772450706,-0.045962544399587996,3,folds are correlated; CI is approximate
