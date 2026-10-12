@@ -1,0 +1,7 @@
+Calibration evaluation
+----------------------
+Claims evaluated: 3855
+Fraud cases: 231
+Brier score: 0.050106
+Evaluation subset: model calibration subset
+Caution: calibrator was fitted on these same labels; results are diagnostic, not independent test performance.
