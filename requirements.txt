@@ -57,3 +57,6 @@ urllib3==2.8.0
 uvicorn==0.54.0
 watchdog==6.0.0
 websockets==17.2
+catboost==1.2.10
+optuna==5.0.0
+xgboost==3.4.1
